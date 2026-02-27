@@ -1,6 +1,6 @@
 import re
 from flask import current_app
-from flask import Blueprint, render_template, request, redirect, url_for, flash
+from flask import Blueprint, render_template, request, redirect, url_for, flash, jsonify
 from flask_login import login_user, logout_user, login_required, current_user
 
 from app.extensions import db
@@ -11,7 +11,7 @@ from app.services.token_service import generate_verify_token, confirm_verify_tok
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
 
 EMAIL_DOMAIN = "utpn.edu.mx"
-MATRICULA_RE = re.compile(r"^[0-9]+@utpn\.edu\.mx$")
+MATRICULA_RE = re.compile(r"^\d{8}@utpn\.edu\.mx$")
 ADMIN_RE = re.compile(r"^[a-zA-Z]+@utpn\.edu\.mx$")
 
 
@@ -24,6 +24,14 @@ def _render_auth(mode: str = "login"):
     if mode not in {"login", "register"}:
         mode = "login"
     return render_template("auth/auth.html", mode=mode)
+
+
+def _bad_register_request(message: str):
+    if request.is_json:
+        return jsonify({"error": message}), 400
+
+    flash(message)
+    return _render_auth("register"), 400
 
 
 @auth_bp.route("/", methods=["GET"])
@@ -70,65 +78,22 @@ def register():
         return redirect(url_for("auth.me"))
 
     if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
-        password = request.form.get("password") or ""
-        confirm_password = request.form.get("confirm_password") or ""
+        data = request.get_json(silent=True) if request.is_json else request.form
 
-        # Confirmación contraseña
-        if password != confirm_password:
-            flash("Las contraseñas no coinciden.")
-            return redirect(url_for("auth.auth_page", mode="register"))
-
-        # Validación dominio
-        if not email.endswith(f"@{EMAIL_DOMAIN}"):
-            flash("Solo se permiten correos institucionales @utpn.edu.mx.")
-            return redirect(url_for("auth.auth_page", mode="register"))
-
-        # Validación patrón (matrícula o administrativo)
-        if not (MATRICULA_RE.match(email) or ADMIN_RE.match(email)):
-            flash("Formato de correo no válido. Usa matrícula@utpn.edu.mx o nombreadministrativo@utpn.edu.mx.")
-            return redirect(url_for("auth.auth_page", mode="register"))
-
-        if len(password) < 6:
-            flash("La contraseña debe tener al menos 6 caracteres.")
-            return redirect(url_for("auth.auth_page", mode="register"))
-
-        existing = User.query.filter_by(email=email).first()
-        if existing:
-            flash("Ese correo ya está registrado. Si no verificaste tu cuenta, revisa tu correo o solicita reenvío.")
-            return redirect(url_for("auth.auth_page", mode="login"))
-
-        # Crear usuario no verificado
-        user = User(email=email, role="ALUMNO", is_verified=False)
-        user.set_password(password)
-        db.session.add(user)
-        db.session.commit()
-
-        # Generar token y enviar email
-        token = generate_verify_token(email)
-        base_url = current_app.config.get("APP_BASE_URL", "http://127.0.0.1:5000")
-        verify_link = f"{base_url}/auth/verify/{token}"
-
-        subject = "Verifica tu cuenta - Sistema de Laboratorios"
-        body = (
-            "Hola.\n\n"
-            "Para activar tu cuenta institucional, abre este enlace:\n\n"
-            f"{verify_link}\n\n"
-            "Este enlace expira en 1 hora.\n"
+        email = (data.get("email") or "").strip().lower()
+        password = data.get("password") or ""
+        confirm_password = (
+            data.get("confirm_password")
+            or data.get("confirmPassword")
+            or data.get("password_confirm")
+            or ""
         )
 
-        send_email(email, subject, body)
+        if not confirm_password:
+            return _bad_register_request("confirm_password es obligatorio.")
 
-        flash("Registro exitoso. Revisa tu correo institucional para verificar tu cuenta.")
-        return redirect(url_for("auth.auth_page", mode="login"))
-
-    return redirect(url_for("auth.auth_page", mode="register"))
-    if current_user.is_authenticated:
-        return redirect(url_for("auth.me"))
-
-    if request.method == "POST":
-        email = (request.form.get("email") or "").strip().lower()
-        password = request.form.get("password") or ""
+        if password != confirm_password:
+            return _bad_register_request("Las contraseñas no coinciden.")
 
         # Validación dominio
         if not email.endswith(f"@{EMAIL_DOMAIN}"):

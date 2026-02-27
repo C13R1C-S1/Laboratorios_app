@@ -53,12 +53,8 @@ def create_app():
     from app.controllers.reports_controller import reports_bp
     app.register_blueprint(reports_bp)
 
-
     from app.controllers.ra_client_controller import ra_client_bp
     app.register_blueprint(ra_client_bp)
-
-
-
     # Ruta de salud para verificar que el servidor está vivo
     @app.get("/health")
     def health():
